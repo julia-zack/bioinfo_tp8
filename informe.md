@@ -1,6 +1,6 @@
 # TP 8: transcriptómica y GSEA
 
-Cada ejercicio se corre por separado desde la raíz del proyecto con el comando `venv/bin/python main.py <ejercicio>`, por ejemplo `venv/bin/python main.py 1.1`; sin argumentos, lista los ejercicios disponibles. Los nombres son `<objetivo>.<ejercicio>`, siguiendo la numeración de la consigna.
+Cada ejercicio se corre por separado desde la raíz del proyecto con el comando `venv/bin/python main.py <ejercicio>`, por ejemplo `venv/bin/python main.py 1.1`; sin argumentos, lista los ejercicios disponibles. Los nombres son `<objetivo>.<ejercicio>`, siguiendo la numeración de la consigna. En el Objetivo 2, la consigna numera por separado los ejercicios de PEA (1 a 3) y los de GSEA (1 a 4), así que los nombres tienen un nivel más: `2.1.<ejercicio>` para PEA (`2.1.1` a `2.1.3`) y `2.2.<ejercicio>` para GSEA (`2.2.1` a `2.2.4`).
 
 El código de cada ejercicio está en `exercises/` (por ejemplo `exercises/obj1/ex1.py`), y la carga de las tablas y el filtrado de DEGs en `degs.py`. Las versiones de las librerías están en `requirements.txt`.
 
@@ -267,3 +267,381 @@ No hay ninguna sonda mezclada: son exactamente las 810 y 976 sondas con logFC ne
 **Los tumores 6, 3 y 9 forman una rama aparte.** Dentro de los tumores, el clustering agrupa a PTC_006, PTC_003 y PTC_009 en una rama separada del resto. Son los mismos tres que en el PCA quedaban a mitad de camino hacia el tejido sano. En el heatmap se ve por qué: sus colores son más pálidos, porque sus sondas cambian menos respecto del promedio que en los otros tumores.
 
 **El tumor 8 tiene los colores más intensos.** PTC_008 tiene franjas de rojo y de azul más fuertes que el resto de los tumores, sobre todo un grupo de sondas del bloque de abajo con azul muy intenso. Es probablemente lo mismo que lo separaba de los demás tumores en el PC2 del PCA.
+
+---
+
+## Objetivo 2. Pathway Enrichment Analysis (PEA) y Gene-Set Enrichment Analysis (GSEA)
+
+Hasta acá tenemos una lista de 1277 genes que cambian entre tumor y tejido sano. Una lista de nombres de genes, por sí sola, dice poco. La pregunta del Objetivo 2 es qué **funciones** del tejido están cambiando.
+
+Para responderla se usan bases de datos que agrupan genes según su función: conjuntos (*gene sets*) de genes que participan en un mismo proceso, como la síntesis de hormona tiroidea, la respuesta inmune o la división celular. A cada uno de estos conjuntos se lo llama "vía" o "término".
+
+El **PEA** (*Pathway Enrichment Analysis*, análisis de enriquecimiento de vías) toma la lista de DEGs (genes diferencialmente expresados) y busca qué conjuntos aparecen en ella más de lo que se esperaría por azar. Por ejemplo, si un conjunto de "respuesta inmune" tiene 200 genes y 40 están en nuestra lista, cuando por azar esperaríamos unos 10, decimos que ese conjunto está **enriquecido**: algo pasa con la respuesta inmune en el tumor. El **GSEA** (*Gene Set Enrichment Analysis*, análisis de enriquecimiento de conjuntos de genes) responde la misma pregunta de otra forma, y lo vemos en los ejercicios de GSEA (1 a 4).
+
+### PEA – ejercicio 1
+
+> **1-** Importe "gseapy" y corra la función "get_library_name()". Eche un vistazo a lo que devuelve. Elija algunas bases de datos para usar durante el resto del trabajo práctico. Las más usuales son las mencionadas antes: GO (Molecular Function, Biological Process y Cellular Component), KEGG, Reactome y MSigDB. Recuerde que estamos trabajando con datos humanos.
+
+`get_library_name(organism="Human")` devuelve los nombres de las 228 bases de datos de conjuntos de genes que ofrece Enrichr para humanos. Enrichr es el servicio online que consulta gseapy, así que este ejercicio y los siguientes necesitan conexión a internet. Muchas de esas bases son versiones distintas de la misma colección. Las de las familias que nombra la consigna son:
+
+| base | qué agrupa | versiones disponibles |
+|---|---|---|
+| **GO** (*Gene Ontology*, ontología de genes) | tres catálogos: *Biological Process* (procesos biológicos, como "división celular"), *Molecular Function* (qué hace la proteína, como "unión de calcio") y *Cellular Component* (en qué parte de la célula está, como "membrana plasmática") | 2021, 2023, 2025, 2026 |
+| **KEGG** (*Kyoto Encyclopedia of Genes and Genomes*) | vías metabólicas y de señalización, y genes asociados a enfermedades | 2013, 2015, 2016, 2019_Human, 2021_Human, 2026 |
+| **Reactome** | vías y reacciones bioquímicas, con mucho detalle | 2022, 2024 |
+| **MSigDB Hallmark** (*Molecular Signatures Database*, colección "Hallmark") | 50 procesos biológicos bien definidos, cada uno resumido en unos 200 genes; muy usada en cáncer | 2020 |
+
+Elegimos las seis bases que nombra la consigna, en su versión más reciente, salvo KEGG:
+
+- `GO_Biological_Process_2026`, `GO_Molecular_Function_2026` y `GO_Cellular_Component_2026`;
+- `KEGG_2021_Human`: usamos la versión 2021 y no la 2026 porque el ejercicio 2 de GSEA de la consigna grafica el término `KEGG_2021_Human__Thyroid hormone synthesis`, que tiene que existir con ese nombre;
+- `Reactome_Pathways_2024`;
+- `MSigDB_Hallmark_2020`.
+
+Usamos las mismas seis bases para el PEA y para el GSEA, para poder comparar los resultados.
+
+### PEA – ejercicio 2
+
+> **2-** Para correr PEA necesita los "gene symbols". Estos los puede obtener de la tabla de expresión diferencial filtrada. Asegúrese de que todos los valores de la columna SYMBOL que extraiga estén en imprenta mayúscula y que no haya "NAs". Además necesitará hacer una lista enumerando aquellas bases de datos que le interesa utilizar para el análisis (las que eligió en el punto anterior). Una vez tenga la lista de bases de datos y la lista de símbolos puede correr el análisis.
+
+De las 1786 sondas que pasan nuestro criterio, sacamos la columna `SYMBOL`, descartamos las 122 sondas sin gen asignado (los "NAs"), pasamos los símbolos a mayúscula y eliminamos los repetidos, porque un mismo gen puede estar medido por varias sondas. Quedan **1277 símbolos de gen únicos**, que le pasamos a `gp.enrichr` junto con las seis bases elegidas.
+
+#### Cómo se calcula el enriquecimiento
+
+Para cada término de cada base, Enrichr cuenta cuántos de nuestros genes pertenecen a él y compara ese número con lo que se esperaría si hubiéramos elegido 1277 genes al azar, mediante un test exacto de Fisher. Como se evalúan miles de términos, el p-valor se ajusta por comparaciones múltiples con el mismo método de FDR (*False Discovery Rate*, tasa de descubrimientos falsos) que usamos para los DEGs (ver Objetivo 1, ejercicio 2).
+
+La tabla de resultados (`res.results`) tiene una fila por término. Las columnas más importantes son:
+
+- **Gene_set:** la base de datos de la que viene el término.
+- **Term:** el nombre del término.
+- **Overlap:** cuántos de nuestros genes están en el término, sobre el total de genes del término. Por ejemplo, `10/16` significa que el término tiene 16 genes y 10 están en nuestra lista.
+- **Adjusted P-value:** el p-valor ajustado. Si es menor que 0,05, consideramos que el término está enriquecido en nuestra lista y que no es una coincidencia atribuible al azar.
+- **Genes:** cuáles de nuestros genes coincidieron con el término.
+
+#### Resultados
+
+Se evaluaron 7149 términos, de los cuales **242 tienen Adjusted P-value < 0,05**:
+
+| base | términos significativos |
+|---|---:|
+| GO Biological Process | 79 |
+| GO Molecular Function | 5 |
+| GO Cellular Component | 52 |
+| KEGG | 36 |
+| Reactome | 47 |
+| MSigDB Hallmark | 23 |
+
+Los términos más significativos de cada base son:
+
+- **GO Biological Process:** ensamblado del complejo MHC de clase II (MHC: complejo mayor de histocompatibilidad, las proteínas que les presentan antígenos a los linfocitos), procesamiento y presentación de antígenos vía MHC de clase II, regulación positiva del sistema inmune, adhesión entre leucocitos y regulación de la migración celular.
+- **GO Molecular Function:** unión al complejo MHC de clase II, unión de iones metálicos y de calcio, y actividad de receptor de virus.
+- **GO Cellular Component:** complejo MHC de clase II, exosomas y vesículas extracelulares, *rafts* (microdominios) de la membrana plasmática y lumen del retículo endoplásmico.
+- **KEGG:** infecciones (*Staphylococcus aureus*, leishmaniasis, tuberculosis, toxoplasmosis, miocarditis viral), moléculas de adhesión celular, fagosoma y linaje de células hematopoyéticas.
+- **Reactome:** organización de la matriz extracelular, interacciones entre la membrana y la matriz extracelular (sindecanos, integrinas), transporte de IGF (factor de crecimiento similar a la insulina) y señalización por interferón gamma.
+- **MSigDB Hallmark:** transición epitelio-mesénquima, señalización por KRAS (un oncogén), respuesta a estrógenos, vía de p53 (un supresor tumoral), señalización de TNF-alfa (factor de necrosis tumoral) vía NF-κB, hipoxia y complemento.
+
+Las tendencias que muestran estos términos las analizamos en el ejercicio 3 de PEA, con los gráficos.
+
+#### Limitaciones
+
+- **El PEA no distingue genes que suben de genes que bajan.** Le pasamos los 1277 DEGs juntos, así que un término enriquecido puede deberse a genes que se prenden en el tumor, a genes que se apagan o a una mezcla. Para saberlo hay que mirar la columna `Genes` y el logFC de cada uno, o usar el GSEA.
+- **Depende del criterio de corte de los DEGs.** Con otro criterio (por ejemplo, |logFC| > 0,58) la lista sería distinta y los términos enriquecidos podrían cambiar.
+- **El universo de comparación.** Por defecto, Enrichr compara nuestra lista con todos los genes de cada base de datos, no con los 21.405 genes medidos en el array, que serían el universo más apropiado. Esto puede inflar un poco la significancia de algunos términos.
+
+### PEA – ejercicio 3
+
+> **3-** Mucho más práctico es visualizar el resultado del análisis gráficamente. Para esto, gseapy nos provee un par de funciones de graficado. ¿Nota alguna tendencia en los tipos de vías que resultaron significativas?
+
+Graficamos los términos con Adjusted P-value < 0,05 usando `gp.dotplot` y `gp.barplot`, con los 7 términos más significativos de cada base (`top_term=7`), como en la consigna. En el barplot coloreamos las barras según la base de datos, para distinguir de dónde viene cada término.
+
+#### Cómo leer los gráficos
+
+![Barplot del PEA](figures/pea_barplot.png)
+
+**Barplot:** una barra por término. El largo de la barra es −log10 del p-valor ajustado, así que **cuanto más larga la barra, más significativo es el término**, es decir, menos probable que el enriquecimiento sea casualidad. Por ejemplo, una barra de largo 6 corresponde a un p-valor ajustado de 10⁻⁶.
+
+![Dotplot del PEA](figures/pea_dotplot.png)
+
+**Dotplot:** los mismos términos, uno por fila, ubicados en la columna de la base a la que pertenecen. Muestra dos datos por término:
+
+- **el color** es la significancia (log10 de 1/FDR): cuanto más oscuro, más significativo;
+- **el tamaño del punto** es el porcentaje de los genes del término que están en nuestra lista. Por ejemplo, el término "MHC Class II Protein Complex" tiene un punto grande porque 11 de sus 17 genes están entre nuestros DEGs (genes diferencialmente expresados).
+
+#### Tendencias
+
+Los términos significativos se agrupan en tres grandes temas, que aparecen de forma consistente en bases de datos distintas:
+
+1. **Sistema inmune.** Es el tema dominante. En GO (*Gene Ontology*) aparecen el complejo MHC de clase II (complejo mayor de histocompatibilidad, las proteínas que presentan antígenos a los linfocitos) y el procesamiento y la presentación de antígenos. En KEGG aparecen vías de infecciones (*Staphylococcus aureus*, tuberculosis, leishmaniasis, toxoplasmosis), el fagosoma y el linaje de células hematopoyéticas. En MSigDB Hallmark, la señalización de TNF-alfa (factor de necrosis tumoral) vía NF-κB y el complemento. Las vías de infecciones no indican que haya una infección: aparecen porque comparten muchos genes de la respuesta inmune, como los del MHC. Esto es coherente con lo que se sabe del carcinoma papilar de tiroides, que suele estar infiltrado por linfocitos y otras células inmunes, y cuyas células tumorales pueden empezar a expresar MHC de clase II.
+2. **Matriz extracelular, adhesión e invasión.** Reactome muestra la organización de la matriz extracelular y las interacciones de la membrana celular con ella (integrinas, sindecanos), y KEGG, las moléculas de adhesión celular. En MSigDB Hallmark, el término más significativo es la transición epitelio-mesénquima, el proceso por el cual una célula epitelial pierde su adhesión a las vecinas y gana capacidad de moverse. Son procesos típicos de un tumor que remodela el tejido que lo rodea y lo invade.
+3. **Vías típicas de cáncer.** En MSigDB Hallmark aparecen la señalización por KRAS (en el carcinoma papilar de tiroides es frecuente que esta misma cascada de señalización esté activada por mutaciones en BRAF o RAS), la vía de p53 (un supresor tumoral), la hipoxia y la respuesta a estrógenos.
+
+Los términos de GO Molecular Function y GO Cellular Component son en general más inespecíficos ("unión de iones metálicos", "exosoma extracelular"). Los más informativos vuelven a ser los del complejo MHC de clase II.
+
+#### Dirección de los cambios
+
+Como el PEA no distingue entre genes que suben y genes que bajan (ver PEA – ejercicio 2), contamos, para cada uno de los términos graficados, cuántos de sus genes suben y cuántos bajan en el tumor. Usamos el signo del logFC, recordando que es WT − PTC: negativo significa que el gen sube en el tumor. Cuando un gen tiene varias sondas entre los DEGs, usamos la de mayor |logFC|. Algunos ejemplos:
+
+| término | base | suben en el tumor | bajan en el tumor |
+|---|---|---:|---:|
+| MHC Class II Protein Complex | GO Cellular Component | 11 | 0 |
+| Antigen Processing and Presentation via MHC Class II | GO Biological Process | 12 | 0 |
+| *Staphylococcus aureus* infection | KEGG | 24 | 0 |
+| Tuberculosis | KEGG | 28 | 5 |
+| p53 Pathway | MSigDB Hallmark | 31 | 2 |
+| TNF-alpha Signaling via NF-kB | MSigDB Hallmark | 28 | 4 |
+| Epithelial Mesenchymal Transition | MSigDB Hallmark | 31 | 6 |
+| Extracellular Matrix Organization | Reactome | 38 | 8 |
+| Hypoxia | MSigDB Hallmark | 16 | 16 |
+| Metal Ion Binding | GO Molecular Function | 33 | 33 |
+
+**Casi todos los términos principales se explican por genes que suben en el tumor**, aunque entre nuestros 1277 DEGs hay más genes que bajan (675) que genes que suben (602). Los términos inmunes son los más extremos: en varios, todos los genes de nuestra lista suben en el tumor. Los únicos términos con genes repartidos de forma pareja son los más generales, como la hipoxia o la unión de iones metálicos.
+
+Esto sugiere que los genes que se prenden en el tumor se concentran en unos pocos procesos bien definidos (respuesta inmune, remodelado de la matriz, invasión), mientras que los genes que se apagan están más repartidos entre procesos distintos y ninguno alcanza a destacarse en el PEA. Llama la atención que no aparezca entre los términos principales la pérdida de la función tiroidea (la síntesis de hormona tiroidea), que es esperable en un tumor de tiroides. El GSEA, que tiene en cuenta la dirección de los cambios y usa todos los genes, debería mostrarla mejor: lo vemos en los ejercicios de GSEA.
+
+### Gene-Set Enrichment Analysis (GSEA)
+
+#### Por qué otro análisis
+
+El PEA (análisis de enriquecimiento de vías) tiene dos limitaciones, que vimos en los ejercicios 2 y 3 de PEA:
+
+1. **No distingue genes que suben de genes que bajan.** Recibe una lista de genes sin dirección. Para saber hacia dónde cambiaba cada término tuvimos que contar a mano.
+2. **Depende del criterio de corte de los DEGs (genes diferencialmente expresados).** Un gen con |logFC| = 0,99 queda afuera y uno con 1,01 queda adentro, aunque sean casi iguales, y con otro criterio el resultado cambiaría.
+
+El **GSEA** (*Gene Set Enrichment Analysis*, análisis de enriquecimiento de conjuntos de genes) resuelve las dos cosas: en lugar de una lista cortada, usa **todos los genes, ordenados** según cuánto y en qué dirección cambian.
+
+#### La idea
+
+Primero se ordenan todos los genes en una fila, desde el que más sube en una condición hasta el que más baja, con los que no cambian en el medio. Después, para cada conjunto de genes (cada término de las bases de datos), se marca dónde caen sus integrantes en esa fila:
+
+```
+principio de la fila  ←—————————————  no cambian  —————————————→  final de la fila
+   G1  G2  G3  G4  G5  G6  G7  G8  G9  G10  ...  G20000
+   |   |       |                                   |
+```
+
+Si los genes del conjunto se amontonan en una de las puntas, el conjunto entero se movió en esa dirección. Si están desparramados al azar por toda la fila, ese proceso no cambió. El GSEA mide justamente eso: si los genes de cada conjunto están amontonados en una punta de la fila o desparramados.
+
+#### Cómo se mide
+
+**El puntaje de enriquecimiento (ES, *Enrichment Score*).** Se recorre la fila de principio a fin con un contador que empieza en 0. Cada vez que aparece un gen del conjunto, el contador sube; cada vez que aparece un gen que no es del conjunto, baja un poco. Si los genes del conjunto están al principio de la fila, el contador sube rápido y forma un pico alto. Si están al final, el contador primero baja mucho (pasa por muchos genes que no son del conjunto) y forma un valle profundo antes de subir. El puntaje de enriquecimiento es la altura del pico o la profundidad del valle, la que esté más lejos de 0:
+
+- cerca de +1: los genes del conjunto están amontonados al principio de la fila;
+- cerca de −1: están amontonados al final;
+- cerca de 0: están desparramados.
+
+Ese recorrido del contador es la curva que se ve en los gráficos de GSEA (Fig. 6 de la consigna).
+
+**El puntaje de enriquecimiento normalizado (NES, *Normalized Enrichment Score*).** El tamaño del conjunto influye en el puntaje. Con un conjunto de 10 genes es bastante fácil que, por casualidad, varios caigan cerca del principio de la fila y el puntaje llegue a 0,5. Con un conjunto de 300 genes, en cambio, un puntaje de 0,5 por azar es muy improbable. El mismo valor no vale lo mismo en un conjunto chico que en uno grande. Para corregirlo, el programa mezcla la fila al azar muchas veces (1000 en nuestro caso, el parámetro `permutation_num`), calcula qué puntaje obtiene cada conjunto por pura casualidad, y divide el puntaje real por el que se obtiene típicamente por azar. Por ejemplo:
+
+| conjunto | genes | puntaje real | puntaje típico por azar | puntaje normalizado |
+|---|---:|---:|---:|---:|
+| A | 10 | 0,5 | 0,4 | 0,5 / 0,4 ≈ 1,25 |
+| B | 300 | 0,5 | 0,15 | 0,5 / 0,15 ≈ 3,3 |
+
+El puntaje normalizado indica cuántas veces más amontonado está el conjunto de lo que estaría por azar, y conserva el signo: positivo si está amontonado al principio de la fila y negativo si está al final. Cuanto más lejos de 0, más fuerte es el efecto. Es el que se usa para comparar términos entre sí.
+
+**El FDR q-val.** Es la probabilidad de que el amontonamiento observado sea casualidad, calculada a partir de las mismas permutaciones y ajustada por comparaciones múltiples con el FDR (*False Discovery Rate*, tasa de descubrimientos falsos), porque se evalúan miles de conjuntos. Consideramos significativos los términos con FDR q-val < 0,05.
+
+**Los genes líderes (`Lead_genes`).** Son los genes del conjunto que están en la punta donde se amontonan, antes del pico (o del valle) del contador: son los que más contribuyen al resultado.
+
+#### El ranking y su signo
+
+La consigna ordena los genes según el puntaje
+
+> rank = −log10(P.Value) × logFC
+
+- −log10(P.Value) es grande cuando el cambio es estadísticamente muy confiable.
+- logFC es grande cuando el cambio es grande, y su signo indica la dirección.
+
+Multiplicados, quedan al principio de la fila los genes con logFC positivo grande y p-valor chico, y al final los de logFC negativo grande y p-valor chico. Los genes que no cambian, o cuyo cambio es dudoso, quedan en el medio.
+
+En nuestros datos, el logFC es WT − PTC (ver Objetivo 1, ejercicio 1). Con la fórmula tal cual, al principio de la fila quedarían los genes más expresados en el tejido sano, y un puntaje normalizado positivo significaría "más activo en el tejido sano". Para que la lectura sea más intuitiva, **invertimos el signo del logFC**, es decir, usamos PTC − WT:
+
+> rank = −log10(P.Value) × (−logFC)
+
+Así, al principio de la fila quedan los genes que suben en el tumor, y **un puntaje normalizado positivo significa que el conjunto está más activo en el tumor; uno negativo, que está más activo en el tejido sano**. Una consecuencia: la Fig. 6 de la consigna muestra "Thyroid hormone synthesis" con puntaje normalizado positivo, lo que es consistente con que la cátedra usó el logFC tal como viene (WT − PTC), ya que la síntesis de hormona tiroidea es más activa en el tejido sano. Con nuestra convención, ese término debería dar negativo.
+
+### GSEA – ejercicio 1
+
+> **4-** Anexe a la DE_table original una columna con el puntaje de ranking correspondiente. Este se calcula como -log10(pVal)*logFC. Luego reordene la tabla en el sentido descendiente de la columna de ranking. Genere un nuevo dataframe que contenga solo las columnas "SYMBOL" y "rank". Asegúrese de que todos los símbolos estén en imprenta mayúscula y elimine cualquier fila que contenga NA. Este dataframe nuevo es lo que daremos de comer a la función que realiza el GSEA junto con una lista de bases de datos que queremos que utilice.
+
+#### Cómo armamos el ranking
+
+1. A cada sonda de `DE_table` le calculamos el puntaje `rank = −log10(P.Value) × (−logFC)`, con el signo del logFC invertido para que un puntaje positivo signifique "sube en el tumor" (ver la sección anterior).
+2. Descartamos las sondas sin gen asignado y pasamos los símbolos a mayúscula.
+3. **Nos quedamos con una sonda por gen.** El ranking necesita un único puntaje por gen, pero 11.461 genes tienen más de una sonda (por ejemplo, FN1, la fibronectina, tiene 7). Elegimos, para cada gen, **la sonda con mayor expresión media** (columna `AveExpr`).
+4. Ordenamos de mayor a menor puntaje y nos quedamos con las columnas `SYMBOL` y `rank`.
+
+**Por qué la sonda de mayor expresión media.** Las distintas sondas de un gen no son mediciones repetidas de un mismo valor. Muchas veces una sonda mide bien el gen y otras casi no detectan señal, porque apuntan a una variante del ARN que no está presente o porque hibridan mal. Por eso descartamos dos alternativas:
+
+- **Promediar los puntajes de las sondas** diluye la señal de la sonda buena con la de las sondas que no detectan nada.
+- **Quedarse con la sonda más cercana al promedio** tiene el mismo problema, porque el promedio queda arrastrado por las sondas malas. Además, cuando hay dos sondas (el caso más frecuente, 5462 genes), las dos quedan a la misma distancia del promedio y no se puede elegir.
+
+Por ejemplo, para LGALS3 y MET:
+
+| gen | sonda | logFC | expresión media | puntaje |
+|---|---|---:|---:|---:|
+| LGALS3 | 208949_s_at | −2,23 | 12,0 | 17,78 |
+| LGALS3 | 1557197_a_at | 0,00 | 2,2 | 0,00 |
+| MET | 203510_at | −2,31 | 11,5 | 12,99 |
+| MET | 213807_x_at | −1,79 | 5,2 | 3,45 |
+| MET | 211599_x_at | −1,82 | 6,5 | 2,77 |
+| MET | 213816_s_at | −0,73 | 2,6 | 0,88 |
+
+En LGALS3, el promedio (8,89) queda a la misma distancia de las dos sondas. En MET, el promedio (5,02) está más cerca de la sonda de 3,45, que casi no detecta señal, que de la de 12,99, que es la que realmente mide el gen. Elegir por expresión media se queda en los dos casos con la sonda que mide bien. Además, a diferencia de elegir la sonda de puntaje más extremo, este criterio **no mira el resultado**: no favorece a las sondas que, por azar, muestran un cambio más grande.
+
+El ranking final tiene **21.405 genes**: 12.121 con puntaje positivo y 9262 con puntaje negativo. Al principio de la fila (los que más suben en el tumor) están HMGA2 (54,8), LRP4 y TENM1; al final (los que más suben en el tejido sano), LRP1B (−22,9), RYR2 y SPX. gseapy avisa que hay valores repetidos en el ranking: son unos 2100 genes con puntaje exactamente 0, que quedan en el medio de la fila. Su orden entre ellos es arbitrario, pero no afecta el resultado, porque el enriquecimiento depende de lo que pasa en las puntas.
+
+Corrimos `gp.prerank` con las seis bases elegidas y 1000 permutaciones, con una semilla fija (`seed=42`) para que las permutaciones, que son al azar, den siempre el mismo resultado. Como el análisis tarda alrededor de un minuto, el resultado se guarda en `results/gsea_prerank.pkl` y los ejercicios siguientes lo leen de ahí.
+
+#### Resultados
+
+Se evaluaron 5277 términos, de los cuales **69 tienen FDR q-val < 0,05**: **65 con puntaje normalizado (NES) positivo**, es decir, más activos en el tumor, y **solo 4 con puntaje normalizado negativo**, más activos en el tejido sano.
+
+Los 10 términos con mayor puntaje normalizado, más activos en el tumor:
+
+| término | base | puntaje normalizado | FDR q-val |
+|---|---|---:|---:|
+| Allograft Rejection (rechazo de trasplante) | MSigDB Hallmark | 1,89 | < 0,001 |
+| Serine-type Endopeptidase Activity (actividad de serina-proteasa) | GO Molecular Function | 1,84 | < 0,001 |
+| Coagulation (coagulación) | MSigDB Hallmark | 1,82 | < 0,001 |
+| Secretory Granule Lumen (interior de gránulos de secreción) | GO Cellular Component | 1,81 | < 0,001 |
+| Serine-type Peptidase Activity (actividad de serina-peptidasa) | GO Molecular Function | 1,81 | < 0,001 |
+| Neutrophil Degranulation (degranulación de neutrófilos) | Reactome | 1,80 | < 0,001 |
+| Extracellular Matrix Organization (organización de la matriz extracelular) | Reactome | 1,78 | < 0,001 |
+| Interferon Gamma Response (respuesta a interferón gamma) | MSigDB Hallmark | 1,77 | < 0,001 |
+| Immunoregulatory Interactions Between a Lymphoid and a non-Lymphoid Cell (interacciones inmunorreguladoras entre linfocitos y otras células) | Reactome | 1,77 | < 0,001 |
+| *Staphylococcus aureus* infection | KEGG | 1,77 | < 0,001 |
+
+Los 4 términos más activos en el tejido sano:
+
+| término | base | puntaje normalizado | FDR q-val |
+|---|---|---:|---:|
+| Sensory Perception of Smell (percepción del olfato) | GO Biological Process | −1,73 | 0,004 |
+| Postsynaptic Density Membrane (membrana postsináptica) | GO Cellular Component | −1,70 | < 0,001 |
+| 9+2 Motile Cilium (cilio móvil) | GO Cellular Component | −1,60 | 0,019 |
+| Oxidative Phosphorylation (fosforilación oxidativa) | MSigDB Hallmark | −1,59 | 0,003 |
+
+Del lado del tumor aparecen los mismos temas que en el PEA (análisis de enriquecimiento de vías): respuesta inmune, matriz extracelular y vías de cáncer, como la señalización por KRAS o la angiogénesis (formación de vasos sanguíneos). Además aparecen la coagulación y las proteasas (enzimas que cortan proteínas). Del lado del tejido sano, en cambio, hay muy pocos términos. La fosforilación oxidativa (la respiración en las mitocondrias) es biológicamente plausible. La percepción del olfato y la membrana postsináptica no tienen relación esperable con la tiroides, y probablemente reflejen genes que casi no se expresan en este tejido. Esto confirma lo que observamos en el PEA: los genes que se prenden en el tumor se concentran en procesos bien definidos, mientras que los que se apagan están repartidos entre procesos distintos.
+
+#### La síntesis de hormona tiroidea
+
+El término "Thyroid hormone synthesis" de KEGG (*Kyoto Encyclopedia of Genes and Genomes*), que la consigna usa de ejemplo en el ejercicio 2 de GSEA, tiene puntaje normalizado **−1,41**, en la dirección esperada (más activo en el tejido sano), pero **FDR q-val = 0,90**: no es significativo. En la Fig. 6 de la consigna, en cambio, sí lo es (FDR 0,011).
+
+Los genes específicos de la función tiroidea sí están al final de la fila, del lado del tejido sano: TPO (tiroperoxidasa), DIO1 y DIO2 (desyodasas), SLC26A4 (pendrina), IYD, TSHR (receptor de la hormona estimulante de la tiroides) y PAX8 están todos entre los últimos ~500 de los 21.405 genes. Pero el término tiene 75 genes, y muchos son genes de uso general (bombas de iones, proteínas de la vía de secreción) que participan en esta vía y en muchas otras, casi no cambian y están repartidos por toda la fila: diluyen la señal de los genes específicos. Además, la tiroglobulina (TG), el gen más característico de la tiroides, queda en la posición 18.469, casi en el medio. Su única sonda tiene la expresión media más alta de todo el array (14,5) y muestra poco cambio (logFC 0,35), probablemente porque la señal está saturada.
+
+#### Robustez frente a la elección de sonda
+
+Para ver si la elección de sonda influye en las conclusiones, repetimos el GSEA eligiendo para cada gen la sonda de puntaje más extremo (la de mayor |rank|) en lugar de la de mayor expresión media, con todo lo demás igual:
+
+| | sonda de mayor expresión media | sonda de puntaje más extremo |
+|---|---:|---:|
+| términos con FDR q-val < 0,05 | 69 | 62 |
+| más activos en el tumor | 65 | 58 |
+| más activos en el tejido sano | 4 | 4 (los mismos) |
+| Thyroid hormone synthesis | NES −1,41; FDR 0,90 | NES −1,50; FDR 0,21 |
+
+- **Las conclusiones no cambian.** 57 términos son significativos con los dos criterios, y la correlación entre los puntajes normalizados de todos los términos es 0,93. Los 4 términos del tejido sano son los mismos.
+- **Las diferencias están en el borde de la significancia.** Los términos que aparecen con un solo criterio tienen FDR q-val cercano a 0,05 y pertenecen a los mismos temas. Por ejemplo, con la sonda más extrema aparece la cascada del complemento y se pierde la adhesión focal.
+- **La síntesis de hormona tiroidea sigue sin ser significativa** con ninguno de los dos criterios. La elección de sonda no explica la diferencia con la consigna; en el ejercicio 2 de GSEA mostramos que esa diferencia viene de los datos.
+
+El resultado del GSEA es robusto frente a la elección de sonda, lo que le da solidez a las conclusiones.
+
+### GSEA – ejercicio 2
+
+> **2-** Haga un gseaplot. Es un gráfico que permite visualizar para uno o varios términos la distribución de su enriquecimiento en la lista rankeada de genes.
+
+Graficamos el término de la consigna, "Thyroid hormone synthesis" de KEGG (*Kyoto Encyclopedia of Genes and Genomes*), con `prerank_result.plot(terms=..., show_ranking=True)`.
+
+![GSEA de la síntesis de hormona tiroidea](figures/gsea_thyroid.png)
+
+#### Cómo leer el gráfico
+
+El gráfico tiene tres partes, de arriba hacia abajo:
+
+1. **La curva verde** es el recorrido del contador que define el puntaje de enriquecimiento (ES): se avanza por la fila de genes ordenados de izquierda a derecha, y la curva sube cada vez que aparece un gen del término y baja un poco cada vez que aparece un gen que no es del término.
+2. **Las rayitas negras** marcan la posición en la fila de cada uno de los genes del término.
+3. **La barra roja y azul, y el gráfico de abajo**, muestran el ranking: a la izquierda (rojo) están los genes con puntaje positivo, que suben en el tumor, y a la derecha (azul) los de puntaje negativo, que suben en el tejido sano. El puntaje cruza el 0 en la posición 12.121.
+
+#### Qué muestra
+
+- **La curva forma un valle profundo a la derecha.** Sube apenas al principio, baja de forma casi recta a lo largo de casi toda la fila (pasa por miles de genes que no son del término), llega a su mínimo, **−0,67**, cerca de la posición 19.000, y al final sube de golpe hasta 0. Ese salto final corresponde a los genes del término amontonados en la punta de la fila, del lado del tejido sano.
+- **Las rayitas muestran dos grupos de genes.** Hay un grupo denso al final de la fila: son los genes específicos de la función tiroidea (TPO, DIO1, DIO2, SLC26A4, IYD, TSHR, PAX8). Y hay muchas rayitas repartidas por el principio y el medio: son los genes de uso general del término, que no cambian de forma consistente y diluyen la señal. De los 74 genes del término presentes en el ranking, 19 son genes líderes, los que están en la punta antes del valle.
+- **El ranking es asimétrico.** Los puntajes positivos llegan a ~55 y los negativos solo a ~−23, igual que en el volcano plot: los cambios más marcados y significativos son los de los genes que suben en el tumor.
+
+El recuadro muestra tres valores:
+
+- **NES (puntaje de enriquecimiento normalizado) = −1,41:** negativo, es decir, el término está más activo en el tejido sano, como se esperaba.
+- **Pval (p-valor sin ajustar) = 0,033:** considerado por sí solo, el término sería significativo.
+- **FDR (p-valor ajustado por la tasa de descubrimientos falsos) = 0,90:** al tener en cuenta que se evaluaron 5277 términos, deja de serlo. Con tantos términos, se esperan muchos con un p-valor de 0,03 solo por azar. Es el mismo problema de las comparaciones múltiples que vimos con las sondas en el Objetivo 1 (ejercicio 2).
+
+#### Por qué difiere de la figura de la consigna
+
+Nuestro gráfico difiere del de la Fig. 6 de la consigna en dos aspectos.
+
+**1. Está dado vuelta.** En la figura de la consigna, la curva forma un pico a la izquierda, con puntaje normalizado positivo. Nuestro gráfico es la imagen espejo: un valle a la derecha, con puntaje normalizado negativo. Esto es esperable: la consigna usa el logFC tal como viene (WT − PTC), así que en su fila los genes más expresados en el tejido sano quedan al principio, y nosotros invertimos el signo para que queden al final. Es la misma información, vista desde el otro lado.
+
+**2. El enriquecimiento es más fuerte en la consigna.** Allí el puntaje de enriquecimiento llega a ~0,85 y el término es significativo (FDR 0,011). El nuestro llega a −0,67 y no lo es (FDR 0,90). La figura de la consigna incluye dos datos de su ranking que permiten ver que esta diferencia viene de los datos y no de nuestras decisiones:
+
+- **"Zero score at 12977":** en su ranking hay 12.977 genes con puntaje positivo, es decir, del lado del tejido sano. Con nuestra tabla y el signo de la consigna, probamos todas las formas razonables de elegir una sonda por gen, y ninguna da ese número:
+
+| cómo se elige la sonda de cada gen | genes del lado del tejido sano |
+|---|---:|
+| la de mayor expresión media (la que usamos) | 9262 |
+| la de puntaje más extremo (mayor \|rank\|) | 9278 |
+| promedio de las sondas del gen | 9277 |
+| mediana de las sondas del gen | 8806 |
+| la de puntaje más alto | 10.909 |
+| la de puntaje más bajo | 5943 |
+| **figura de la consigna** | **12.977** |
+
+- **La escala del ranking:** en la figura de la consigna, los puntajes del lado del tejido sano llegan a ~50. En nuestros datos, el gen que más sube en el tejido sano tiene un puntaje de ~23 (en valor absoluto). Es decir, en los datos de la consigna los genes que bajan en el tumor, entre ellos los de la función tiroidea, lo hacen de forma mucho más marcada y significativa que en los nuestros.
+
+Concluimos que la figura de la consigna se hizo con otra tabla de expresión diferencial, o con los mismos datos procesados de otra manera (otra normalización u otras muestras), y que con nuestra tabla no se puede reproducir. Lo que sí coincide es la dirección: en los dos casos, la síntesis de hormona tiroidea es más activa en el tejido sano.
+
+**Un problema de seguir la consigna al pie de la letra.** Si se arma el ranking exactamente como indica la consigna, sin elegir una sonda por gen, gseapy no junta las sondas repetidas: usa las 44.707 sondas con gen asignado como si fueran genes distintos, con nombres repetidos, y solo emite un aviso ("Duplicated values found"). Un mismo gen aparece entonces varias veces en la fila y cuenta varias veces en el cálculo del puntaje de enriquecimiento. Elegir una sonda por gen, como hicimos en el ejercicio 1 de GSEA, evita este problema.
+
+### GSEA – ejercicio 3
+
+> **3-** Filtre la tabla de resultados de GSEA por FDR q-val <0.05 y elija 2 términos con NES positivo y 2 con NES negativo. Guarde los nombres de los 4 términos en una lista "mis_terms".
+
+#### Qué términos elegimos y por qué
+
+De los 69 términos con FDR q-val < 0,05, 65 tienen puntaje normalizado (NES) positivo, es decir, son más activos en el tumor, y solo 4 lo tienen negativo, más activos en el tejido sano.
+
+**Del lado del tumor** elegimos un término por cada uno de los dos grandes temas que aparecieron en el PEA (análisis de enriquecimiento de vías) y en el GSEA (análisis de enriquecimiento de conjuntos de genes):
+
+- **Interferon Gamma Response** (respuesta a interferón gamma), de MSigDB Hallmark, por el tema inmune. El interferón gamma es la señal con la que los linfocitos activan la respuesta inmune, y es la que induce la expresión de MHC (complejo mayor de histocompatibilidad) de clase II, el término más destacado del PEA.
+- **Epithelial Mesenchymal Transition** (transición epitelio-mesénquima), de MSigDB Hallmark, por el tema invasión y matriz extracelular. Fue además el término más significativo de MSigDB Hallmark en el PEA, lo que permite comparar los dos análisis.
+
+**Del lado del tejido sano** solo había 4 términos para elegir:
+
+- **Oxidative Phosphorylation** (fosforilación oxidativa, la producción de energía en las mitocondrias), de MSigDB Hallmark. Es el único de los cuatro con una interpretación biológica clara para la tiroides, y el que se apoya en más genes.
+- **9+2 Motile Cilium** (cilio móvil), de GO Cellular Component. Los otros dos candidatos, "Postsynaptic Density Membrane" (membrana postsináptica) y "Sensory Perception of Smell" (percepción del olfato), tampoco tienen una relación esperable con la tiroides, y sus resultados se apoyan en solo 6 y 5 genes líderes, respectivamente. El cilio móvil se apoya en 28, así que es el menos probable de deberse al ruido. Es una elección forzada por la falta de opciones.
+
+| término | base | ES | NES | FDR q-val | genes líderes / genes del término |
+|---|---|---:|---:|---:|---:|
+| Interferon Gamma Response | MSigDB Hallmark | 0,80 | 1,77 | < 0,001 | 71 / 200 |
+| Epithelial Mesenchymal Transition | MSigDB Hallmark | 0,74 | 1,66 | 0,002 | 59 / 200 |
+| Oxidative Phosphorylation | MSigDB Hallmark | −0,66 | −1,59 | 0,003 | 82 / 199 |
+| 9+2 Motile Cilium | GO Cellular Component | −0,72 | −1,60 | 0,019 | 28 / 130 |
+
+(ES: puntaje de enriquecimiento; NES: puntaje de enriquecimiento normalizado; FDR q-val: p-valor ajustado por la tasa de descubrimientos falsos.)
+
+#### Resultado
+
+![GSEA de los 4 términos elegidos](figures/gsea_mis_terms.png)
+
+El gráfico superpone las curvas de los cuatro términos, y abajo muestra las rayitas de cada uno, con el mismo color, en filas separadas. La forma de las curvas y la distribución de las rayitas muestran que los dos lados no se comportan igual.
+
+**Los términos del tumor tienen picos altos y tempranos.** Las curvas de la respuesta a interferón gamma (azul) y de la transición epitelio-mesénquima (naranja) suben casi en vertical desde el principio de la fila y llegan a su máximo (0,80 y 0,74) antes de la posición 2000. Después bajan en línea recta hasta el final. Las rayitas están muy concentradas en las primeras ~2000 posiciones: los genes de estos dos términos están entre los que más suben en el tumor. Algunos genes líderes:
+
+- **Respuesta a interferón gamma:** METTL7B, ICAM1 (molécula de adhesión intercelular 1, que permite a los leucocitos adherirse a los tejidos), LY6E, CFB (factor B del complemento) y TNFAIP2. METTL7B es además uno de los genes con más peso en el PC1 (primera componente principal) del PCA del Objetivo 1.
+- **Transición epitelio-mesénquima:** FN1 (fibronectina), TNC (tenascina C), COMP, TIMP1 y TGFB1 (factor de crecimiento transformante beta 1, una de las principales señales que inducen esta transición). Son en su mayoría proteínas de la matriz extracelular o reguladores de ella. FN1 es el gen que usamos al principio del trabajo como ejemplo de un gen medido por varias sondas.
+
+**Los términos del tejido sano tienen valles más tardíos y menos definidos.** Las curvas de la fosforilación oxidativa (verde) y del cilio móvil (rojo) bajan de forma pareja durante casi toda la fila y llegan a su mínimo recién alrededor de las posiciones 17.000 a 19.000.
+
+- **Fosforilación oxidativa:** las rayitas se concentran entre las posiciones ~13.000 y ~21.000, en la mitad del lado del tejido sano, pero casi ninguna está en el extremo final de la fila. Esto indica una disminución moderada pero consistente de muchos genes mitocondriales en el tumor, más que un cambio grande de unos pocos. Entre los genes líderes hay enzimas de la oxidación de ácidos grasos (ACADM, ACADSB), un componente de la cadena respiratoria (SDHD, subunidad de la succinato deshidrogenasa) y el transportador de piruvato a la mitocondria (MPC1). La disminución de la actividad mitocondrial es un cambio metabólico frecuente en tumores.
+- **Cilio móvil:** las rayitas están repartidas por toda la fila, y el valle se debe sobre todo a un grupo de genes al final. Es el término menos convincente de los cuatro. Aun así, entre sus genes líderes hay genes que no son exclusivos de los cilios móviles, sino que participan en el armado de cualquier cilio, como IFT88 y DYNC2H1. Las células foliculares de la tiroides tienen un cilio primario (no móvil). Una hipótesis posible es que este término esté captando una disminución de los genes del cilio primario en el tumor, pero no lo verificamos.
+
+Esta diferencia entre los dos lados es consistente con lo que vimos en todo el trabajo: los genes que suben en el tumor lo hacen de forma marcada y concentrada en procesos bien definidos, mientras que los que bajan lo hacen de forma más moderada y repartida. Que del lado del tejido sano haya solo 4 términos significativos, y en su mayoría difíciles de interpretar, es en sí mismo un resultado de este análisis.
